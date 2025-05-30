@@ -121,10 +121,9 @@ impl TlsSettings {
     where
         Self: Sized,
     {
-        // TODO: verify if/how callback in handshake can be done using Rustls
         Error::e_explain(
             InternalError,
-            "Certificate callbacks are not supported with feature \"rustls\".",
+            "Certificate callbacks are not supported when using rustls.",
         )
     }
 }
