@@ -42,21 +42,28 @@ pub struct Acceptor {
 impl TlsSettings {
     /// Create a Rustls acceptor based on the current setting for certificates,
     /// keys, and protocols.
-    ///
-    /// _NOTE_ This function will panic if there is an error in loading
-    /// certificate files or constructing the builder
-    ///
-    /// Todo: Return a result instead of panicking XD
-    pub fn build(self) -> Acceptor {
+    pub(crate) fn build(self) -> Result<Acceptor> {
         // rustls 0.23+ requires an explicit CryptoProvider.
         pingora_rustls::install_default_crypto_provider();
 
-        let Ok(Some((certs, key))) = load_certs_and_key_files(&self.cert_path, &self.key_path)
-        else {
-            panic!(
-                "Failed to load provided certificates \"{}\" or key \"{}\".",
-                self.cert_path, self.key_path
-            )
+        let cert_key = load_certs_and_key_files(&self.cert_path, &self.key_path).explain_err(
+            InternalError,
+            |e| {
+                format!(
+                    "Failed to load provided certificates \"{}\" or key \"{}\" error {}.",
+                    self.cert_path, self.key_path, e
+                )
+            },
+        )?;
+
+        let Some((certs, key)) = cert_key else {
+            return Err(Error::explain(
+                InternalError,
+                format!(
+                    "Certificate \"{}\" or key \"{}\" did not contain expected data.",
+                    self.cert_path, self.key_path
+                ),
+            ));
         };
 
         let builder =
@@ -77,10 +84,10 @@ impl TlsSettings {
             config.alpn_protocols = alpn_protocols;
         }
 
-        Acceptor {
+        Ok(Acceptor {
             acceptor: RusTlsAcceptor::from(Arc::new(config)),
             callbacks: None,
-        }
+        })
     }
 
     /// Enable HTTP/2 support for this endpoint, which is default off.
