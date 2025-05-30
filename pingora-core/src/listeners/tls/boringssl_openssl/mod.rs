@@ -168,14 +168,14 @@ impl TlsSettings {
         }
     }
 
-    pub(crate) fn build(self) -> Acceptor {
-        Acceptor {
+    pub(crate) fn build(self) -> Result<Acceptor> {
+        Ok(Acceptor {
             ssl_acceptor: self.accept_builder.build(),
             callbacks: self.callbacks.map(SharedTlsAcceptCallbacks::from),
             offload: self.offload_threadpool.map(|(shards, threads_per_shard)| {
                 OffloadRuntime::new("downstream TLS offload", shards, threads_per_shard)
             }),
-        }
+        })
     }
 }
 
