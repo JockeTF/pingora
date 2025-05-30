@@ -26,11 +26,11 @@ pub use no_debug::{Ellipses, NoDebug, WithTypeInfo};
 use pingora_error::{Error, ErrorType, OrErr, Result};
 
 pub use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
-pub use rustls::server::{ClientCertVerifierBuilder, WebPkiClientVerifier};
+pub use rustls::server::{ClientCertVerifierBuilder, WantsServerCert, WebPkiClientVerifier};
 pub use rustls::{
     client::WebPkiServerVerifier, crypto::CryptoProvider, version, CertificateError, ClientConfig,
-    DigitallySignedStruct, Error as RusTlsError, KeyLogFile, RootCertStore, ServerConfig,
-    SignatureScheme, Stream,
+    ConfigBuilder, DigitallySignedStruct, Error as RusTlsError, KeyLogFile, RootCertStore,
+    ServerConfig, SignatureScheme, Stream,
 };
 
 /// Install the default `ring` CryptoProvider for rustls.
@@ -50,6 +50,12 @@ pub use tokio_rustls::{Accept, Connect, TlsAcceptor, TlsConnector, TlsStream};
 
 // This allows to skip certificate verification. Be highly cautious.
 pub use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+
+pub mod cert_resolvers {
+    pub use rustls::server::ResolvesServerCert;
+    pub use rustls::server::{AlwaysResolvesServerRawPublicKeys, ResolvesServerCertUsingSni};
+    pub use rustls::sign::{CertifiedKey, SingleCertAndKey};
+}
 
 /// Load the given file from disk as a buffered reader and use the pingora Error
 /// type instead of the std::io version

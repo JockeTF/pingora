@@ -19,18 +19,19 @@ use crate::protocols::tls::{server::handshake, server::handshake_with_callback, 
 use log::debug;
 use pingora_error::ErrorType::InternalError;
 use pingora_error::{Error, OrErr, Result};
+use pingora_rustls::cert_resolvers::ResolvesServerCert;
 use pingora_rustls::load_certs_and_key_files;
 use pingora_rustls::ClientCertVerifier;
-use pingora_rustls::ServerConfig;
 use pingora_rustls::{version, TlsAcceptor as RusTlsAcceptor};
+use pingora_rustls::{ConfigBuilder, ServerConfig, WantsServerCert};
 
 use crate::protocols::{ALPN, IO};
 
 /// The TLS settings of a listening endpoint
 pub struct TlsSettings {
     alpn_protocols: Option<Vec<Vec<u8>>>,
-    cert_path: String,
-    key_path: String,
+    cert_key_path: Option<(String, String)>,
+    cert_resolver: Option<Arc<dyn ResolvesServerCert>>,
     client_cert_verifier: Option<Arc<dyn ClientCertVerifier>>,
 }
 
@@ -46,39 +47,16 @@ impl TlsSettings {
         // rustls 0.23+ requires an explicit CryptoProvider.
         pingora_rustls::install_default_crypto_provider();
 
-        let cert_key = load_certs_and_key_files(&self.cert_path, &self.key_path).explain_err(
-            InternalError,
-            |e| {
-                format!(
-                    "Failed to load provided certificates \"{}\" or key \"{}\" error {}.",
-                    self.cert_path, self.key_path, e
-                )
-            },
-        )?;
-
-        let Some((certs, key)) = cert_key else {
+        let mut config = if let Some((ref cert_path, ref key_path)) = self.cert_key_path {
+            self.build_with_cert_key_files(cert_path, key_path)?
+        } else if let Some(ref cert_resolver) = self.cert_resolver {
+            self.build_with_cert_resolver(cert_resolver.clone())
+        } else {
             return Err(Error::explain(
                 InternalError,
-                format!(
-                    "Certificate \"{}\" or key \"{}\" did not contain expected data.",
-                    self.cert_path, self.key_path
-                ),
+                "Neither cert/key path pair nor certificate resolver available.",
             ));
         };
-
-        let builder =
-            ServerConfig::builder_with_protocol_versions(&[&version::TLS12, &version::TLS13]);
-        let builder = if let Some(verifier) = self.client_cert_verifier {
-            builder.with_client_cert_verifier(verifier)
-        } else {
-            builder.with_no_client_auth()
-        };
-        let mut config = builder
-            .with_single_cert(certs, key)
-            .explain_err(InternalError, |e| {
-                format!("Failed to create server listener config: {e}")
-            })
-            .unwrap();
 
         if let Some(alpn_protocols) = self.alpn_protocols {
             config.alpn_protocols = alpn_protocols;
@@ -88,6 +66,50 @@ impl TlsSettings {
             acceptor: RusTlsAcceptor::from(Arc::new(config)),
             callbacks: None,
         })
+    }
+
+    fn server_config_builder(&self) -> ConfigBuilder<ServerConfig, WantsServerCert> {
+        let versions = [&version::TLS12, &version::TLS13];
+        let builder = ServerConfig::builder_with_protocol_versions(&versions);
+
+        if let Some(ref verifier) = self.client_cert_verifier {
+            builder.with_client_cert_verifier(verifier.clone())
+        } else {
+            builder.with_no_client_auth()
+        }
+    }
+
+    fn build_with_cert_key_files(&self, cert_path: &str, key_path: &str) -> Result<ServerConfig> {
+        let cert_key =
+            load_certs_and_key_files(cert_path, key_path).explain_err(InternalError, |e| {
+                format!(
+                    "Failed to load provided certificates \"{}\" or key \"{}\" error {}.",
+                    cert_path, key_path, e
+                )
+            })?;
+
+        let Some((certs, key)) = cert_key else {
+            return Err(Error::explain(
+                InternalError,
+                format!(
+                    "Certificate \"{}\" or key \"{}\" did not contain expected data.",
+                    cert_path, key_path
+                ),
+            ));
+        };
+
+        // TODO: Add custom CA support
+        self.server_config_builder()
+            .with_single_cert(certs, key)
+            .explain_err(InternalError, |e| {
+                format!("Failed to create server listener config: {e}")
+            })
+    }
+
+    fn build_with_cert_resolver(&self, cert_resolver: Arc<dyn ResolvesServerCert>) -> ServerConfig {
+        // TODO: Add custom CA support
+        self.server_config_builder()
+            .with_cert_resolver(cert_resolver)
     }
 
     /// Enable HTTP/2 support for this endpoint, which is default off.
@@ -111,8 +133,20 @@ impl TlsSettings {
     {
         Ok(TlsSettings {
             alpn_protocols: None,
-            cert_path: cert_path.to_string(),
-            key_path: key_path.to_string(),
+            cert_key_path: Some((cert_path.to_string(), key_path.to_string())),
+            cert_resolver: None,
+            client_cert_verifier: None,
+        })
+    }
+
+    pub fn resolver(cert_resolver: Arc<dyn ResolvesServerCert>) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        Ok(TlsSettings {
+            alpn_protocols: None,
+            cert_key_path: None,
+            cert_resolver: Some(cert_resolver),
             client_cert_verifier: None,
         })
     }
